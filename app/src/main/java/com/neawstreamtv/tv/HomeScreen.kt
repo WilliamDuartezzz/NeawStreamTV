@@ -346,9 +346,9 @@ fun HomeScreen(
                             val focusRequester = remember { FocusRequester() }
 
                             LaunchedEffect(isSelected) {
-                                if (isSelected && canalesMostrar.size > i) {
-                                    scrollState.scrollToItem(i)
+                                if (isSelected && canalesMostrar.size > i && buscarTexto.isEmpty()) {
                                     try {
+                                        scrollState.scrollToItem(i)
                                         focusRequester.requestFocus()
                                     } catch (_: Exception) {}
                                 }
@@ -360,7 +360,10 @@ fun HomeScreen(
                                 focusRequester = focusRequester,
                                 onClick = {
                                     lastClickedIndex = i
-                                    onPlayChannel(canalesCompletos, canalesCompletos.indexOf(canal))
+                                    val indexReal = canalesCompletos.indexOf(canal)
+                                    if (indexReal != -1) {
+                                        onPlayChannel(canalesCompletos, indexReal)
+                                    }
                                 }
                             )
                         }

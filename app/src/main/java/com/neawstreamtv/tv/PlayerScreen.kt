@@ -32,10 +32,25 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
+
+// Instancia única segura de caché para evitar bloqueos en disco y crashes
+object PlayerCacheManager {
+    private var simpleCache: SimpleCache? = null
+
+    @OptIn(UnstableApi::class)
+    fun getCache(context: android.content.Context): SimpleCache {
+        if (simpleCache == null) {
+            val cacheDir = File(context.cacheDir, "media_cache")
+            val cacheEvictor = LeastRecentlyUsedCacheEvictor(100 * 1024 * 1024)
+            val databaseProvider = StandaloneDatabaseProvider(context)
+            simpleCache = SimpleCache(cacheDir, cacheEvictor, databaseProvider)
+        }
+        return simpleCache!!
+    }
+}
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -48,15 +63,13 @@ fun PlayerScreen(
     var indiceActual by remember { mutableStateOf(indiceInicial) }
     var isLoading by remember { mutableStateOf(true) }
     var cambiandoCanal by remember { mutableStateOf(false) }
-    
-    // Disparador para refrescar el reproductor en caso de errores de red persistentes
-    var playerRefreshTrigger by remember { mutableStateOf(0) }
 
     val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    val exoPlayer = remember(playerRefreshTrigger) {
+    // Instancia única y estable de ExoPlayer durante el ciclo de vida de la pantalla
+    val exoPlayer = remember {
         val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS) // Tiempos de conexión más agresivos
+            .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
@@ -64,26 +77,15 @@ fun PlayerScreen(
         val httpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
             .setUserAgent(userAgent)
 
-        val cacheDir = File(context.cacheDir, "media_cache")
-        val cacheEvictor = LeastRecentlyUsedCacheEvictor(100 * 1024 * 1024)
-        val databaseProvider = StandaloneDatabaseProvider(context)
-        val simpleCache = SimpleCache(cacheDir, cacheEvictor, databaseProvider)
-
         val cacheDataSourceFactory = CacheDataSource.Factory()
-            .setCache(simpleCache)
+            .setCache(PlayerCacheManager.getCache(context))
             .setUpstreamDataSourceFactory(httpDataSourceFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
         val mediaSourceFactory = DefaultMediaSourceFactory(cacheDataSourceFactory)
 
-        // Búfer optimizado para inicio rápido (empieza a reproducir en menos de 1 segundo)
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                /* minBufferMs = */ 15000,
-                /* maxBufferMs = */ 50000,
-                /* bufferForPlaybackMs = */ 1500, // Menor tiempo para arrancar rápido
-                /* bufferForPlaybackAfterRebufferMs = */ 3000
-            )
+            .setBufferDurationsMs(15000, 50000, 1500, 3000)
             .setBackBuffer(10000, true)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -99,6 +101,7 @@ fun PlayerScreen(
             }
     }
 
+    // Listener para controlar los estados de reproducción de forma limpia
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -106,6 +109,9 @@ fun PlayerScreen(
                     Player.STATE_READY -> {
                         isLoading = false
                         cambiandoCanal = false
+                    }
+                    Player.STATE_ENDED -> {
+                        isLoading = false
                     }
                     else -> {}
                 }
@@ -119,9 +125,8 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                isLoading = true
-                // Si el stream falla de inmediato, forzamos un refresh limpio
-                playerRefreshTrigger++
+                isLoading = false
+                cambiandoCanal = false
             }
         }
         exoPlayer.addListener(listener)
@@ -132,33 +137,19 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(indiceActual, playerRefreshTrigger) {
-        isLoading = true
-        val canal = listaCanales[indiceActual]
-        val mediaItem = MediaItem.Builder()
-            .setUri(canal.url)
-            .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
-            .build()
+    // Carga de la fuente al cambiar el índice del canal
+    LaunchedEffect(indiceActual) {
+        if (indiceActual in listaCanales.indices) {
+            isLoading = true
+            val canal = listaCanales[indiceActual]
+            val mediaItem = MediaItem.Builder()
+                .setUri(canal.url)
+                .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
+                .build()
         
-        exoPlayer.setMediaItem(mediaItem)
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
-    }
-
-    LaunchedEffect(isLoading, indiceActual, playerRefreshTrigger) {
-        if (isLoading) {
-            delay(4000) // 4 segundos exactos, ideal para TV
-            if (isLoading && !exoPlayer.isPlaying) {
-                // Primer intento rápido: re-preparar la fuente sin recrear todo el player
-                exoPlayer.prepare()
-                exoPlayer.play()
-                
-                // Si pasa otro segundo más y sigue trabado, ejecutamos un reset completo de sockets
-                delay(1500)
-                if (isLoading && !exoPlayer.isPlaying) {
-                    playerRefreshTrigger++
-                }
-            }
+            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
         }
     }
 
@@ -223,7 +214,7 @@ fun PlayerScreen(
                     CircularProgressIndicator(color = Color(0xFFFFBF00))
                     Spacer(modifier = Modifier.height(20.dp))
                     Text(
-                        text = "Cargando: ${listaCanales[indiceActual].nombre}",
+                        text = "Cargando: ${listaCanales.getOrNull(indiceActual)?.nombre ?: "Canal"}",
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
