@@ -51,6 +51,13 @@ import java.util.Locale
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+// Modelo de datos básico para el canal
+data class Canal(
+    val nombre: String,
+    val url: String,
+    val logoUrl: String
+)
+
 val ColorOscuroFondo = Color(0xFF111424)
 val ColorSuperficieOscura = Color(0xFF1A1E30)
 val ColorBlancoAlpha5 = Color(0x0DFFFFFF)
@@ -135,7 +142,7 @@ suspend fun descargarM3u(url: String): String = suspendCancellableCoroutine { co
 @Composable
 fun HomeScreen(
     onPlayChannel: (List<Canal>, Int) -> Unit,
-    onOpenXtreamCode: () -> Unit = {}
+    onOpenXtreamCode: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

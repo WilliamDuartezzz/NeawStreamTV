@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -36,7 +37,6 @@ import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
 
-// Instancia única segura de caché para evitar bloqueos en disco y crashes
 object PlayerCacheManager {
     private var simpleCache: SimpleCache? = null
 
@@ -66,7 +66,6 @@ fun PlayerScreen(
 
     val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    // Instancia única y estable de ExoPlayer durante el ciclo de vida de la pantalla
     val exoPlayer = remember {
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -101,7 +100,6 @@ fun PlayerScreen(
             }
     }
 
-    // Listener para controlar los estados de reproducción de forma limpia
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -137,14 +135,14 @@ fun PlayerScreen(
         }
     }
 
-    // Carga de la fuente al cambiar el índice del canal
+    // CARGA EL STREAM AL ENTRAR O AL CAMBIAR DE CANAL
     LaunchedEffect(indiceActual) {
         if (indiceActual in listaCanales.indices) {
             isLoading = true
             val canal = listaCanales[indiceActual]
             val mediaItem = MediaItem.Builder()
                 .setUri(canal.url)
-                .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
+                .setMimeType(MimeTypes.APPLICATION_M3U8)
                 .build()
         
             exoPlayer.setMediaItem(mediaItem)
